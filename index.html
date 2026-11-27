@@ -554,7 +554,7 @@
     (() => {
       const STORAGE_KEY = "touchline-fc27-career-v1";
       const CLOUD_CONFIG_KEY = "touchline-fc27-cloud-config-v1";
-      const FILE_CLOUD_CONFIG = { projectUrl: "", anonKey: "" };
+      const FILE_CLOUD_CONFIG = { projectUrl: "https://gbgemtdjlzoyibrjplcj.supabase.co/auth/v1/callback", anonKey: "sb_publishable_OR8OhjYPJcUeedY4sXJN1Q_w3qJFN1f" };
       const pages = { dashboard: "ダッシュボード", myteam: "マイチーム", news: "ニュース", rankings: "ランキング", players: "選手データ", league: "リーグ管理", schedule: "日程管理" };
       const safeNumber = value => Number.isFinite(Number(value)) ? Number(value) : 0;
       const ownGoalValue = "__own_goal__";
@@ -844,9 +844,18 @@ grant select, insert, update, delete on public.career_states to authenticated;`;
       function cloudConfig() {
         try {
           const stored = JSON.parse(localStorage.getItem(CLOUD_CONFIG_KEY) || "{}");
+          const projectUrl = String(stored.projectUrl || FILE_CLOUD_CONFIG.projectUrl || "").trim().replace(/\/+$/, "");
+          const anonKey = String(stored.anonKey || FILE_CLOUD_CONFIG.anonKey || "").trim();
+          if (stored.projectUrl && stored.anonKey) {
+            const parsedUrl = new URL(projectUrl);
+            if (/^GOCSPX-/i.test(anonKey) || parsedUrl.pathname !== "/" || parsedUrl.search || parsedUrl.hash) {
+              localStorage.removeItem(CLOUD_CONFIG_KEY);
+              return { ...FILE_CLOUD_CONFIG };
+            }
+          }
           return {
-            projectUrl: String(stored.projectUrl || FILE_CLOUD_CONFIG.projectUrl || "").trim().replace(/\/+$/, ""),
-            anonKey: String(stored.anonKey || FILE_CLOUD_CONFIG.anonKey || "").trim()
+            projectUrl,
+            anonKey
           };
         } catch (error) {
           console.error("クラウド設定を読み込めませんでした。", error);
@@ -869,12 +878,16 @@ grant select, insert, update, delete on public.career_states to authenticated;`;
         const config = cloudConfig();
         const connected = Boolean(config.projectUrl && config.anonKey);
         const account = cloudUser?.email ? `<p class="help-text">ログイン中: ${escapeHtml(cloudUser.email)}</p>` : "";
-        return `<p class="help-text">Supabaseを共有データベースとして使います。URLと公開用のanon/publishable keyを設定してください。service_role keyは絶対に入力しないでください。接続情報はこのブラウザーに保存されます。別端末でも最初に同じ情報を設定するか、全端末で設定を省く場合はHTML内のFILE_CLOUD_CONFIGに設定してから公開してください。</p>
+        return `<p class="help-text">Supabaseを共有データベースとして使います。Project URLとProject Settings → API Keysにある公開用anon/publishable keyを設定してください。Google OAuthのClient ID/SecretやSupabaseのservice_role keyはここに入力しないでください。接続情報はこのブラウザーに保存されます。別端末でも最初に同じ情報を設定するか、全端末で設定を省く場合はHTML内のFILE_CLOUD_CONFIGに設定してから公開してください。</p>
           <form id="cloud-config-form"><div class="form-grid">
             ${formField("Supabase Project URL", "projectUrl", config.projectUrl, "url", 'required placeholder="https://xxxx.supabase.co"')}
             ${formField("公開用 anon / publishable key", "anonKey", config.anonKey, "text", 'required autocomplete="off"')}
           </div><div class="modal-footer"><button class="button primary" type="submit">接続情報を保存</button></div></form>
           ${account}
+          <div class="card" style="margin-top:14px"><div class="card-heading"><div><h2>データ移行・バックアップ</h2><p>ブラウザーや公開URLが変わった場合に使います</p></div></div>
+            <p class="help-text">旧データがあるブラウザーでJSONを書き出し、新しいブラウザーで読み込んでください。読み込みはこの端末のデータを置き換えます。クラウドに別データがある場合、再読み込み後に同期するデータを選べます。</p>
+            <div class="import-actions"><button class="button small" type="button" id="export-career-backup">全データをJSONで保存</button><button class="button small" type="button" id="select-career-backup">JSONバックアップを読み込む</button><input class="file-input" type="file" id="career-backup-file" accept=".json,application/json"></div>
+          </div>
           <div class="card" style="margin-top:14px"><div class="card-heading"><div><h2>Supabase側の初期設定</h2><p>プロジェクトごとに一度だけ設定します</p></div></div>
             <ol class="help-text" style="padding-left:20px">
               <li>GitHubにリポジトリを作り、このアプリのindex.htmlをリポジトリ直下へ置きます。Settings → Pagesでmainブランチの /(root) を公開元にすると、HTTPSのURLが発行されます。HTMLだけが公開され、キャリアデータは公開されません。</li>
@@ -897,11 +910,11 @@ grant select, insert, update, delete on public.career_states to authenticated;`;
           const anonKey = String(form.get("anonKey") || "").trim();
           let parsedUrl;
           try { parsedUrl = new URL(projectUrl); } catch { showToast("Supabase Project URLを確認してください。"); return; }
-          if (parsedUrl.protocol !== "https:" || !parsedUrl.hostname || parsedUrl.username || parsedUrl.password) {
-            showToast("認証情報を含まないHTTPSのSupabase Project URLを入力してください。"); return;
+          if (parsedUrl.protocol !== "https:" || !parsedUrl.hostname || parsedUrl.username || parsedUrl.password || parsedUrl.pathname !== "/" || parsedUrl.search || parsedUrl.hash) {
+            showToast("SupabaseのProject URL（https://プロジェクトID.supabase.co の形式）を入力してください。callback URLは使いません。"); return;
           }
-          if (!anonKey || /\bservice_role\b/i.test(anonKey)) {
-            showToast("公開用anon/publishable keyを入力してください。service_role keyは使えません。"); return;
+          if (!anonKey || /\bservice_role\b/i.test(anonKey) || /^GOCSPX-/i.test(anonKey)) {
+            showToast("Project Settings → API Keysにある公開用anon/publishable keyを入力してください。Google OAuth Secretやservice_role keyは使えません。"); return;
           }
           try {
             localStorage.setItem(CLOUD_CONFIG_KEY, JSON.stringify({ projectUrl, anonKey }));
@@ -929,9 +942,59 @@ grant select, insert, update, delete on public.career_states to authenticated;`;
             showToast("コピーできませんでした。SQL欄から手動でコピーしてください。");
           }
         });
+        $("#export-career-backup").addEventListener("click", downloadCareerBackup);
+        $("#select-career-backup").addEventListener("click", () => $("#career-backup-file").click());
+        $("#career-backup-file").addEventListener("change", importCareerBackup);
         $("#cloud-login").addEventListener("click", signInWithGoogle);
         $("#cloud-refresh")?.addEventListener("click", refreshCloudData);
         $("#cloud-logout")?.addEventListener("click", signOutCloud);
+      }
+      function downloadCareerBackup() {
+        const backup = {
+          format: "touchline-fc27-backup",
+          version: 1,
+          exportedAt: new Date().toISOString(),
+          state
+        };
+        const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `touchline-fc27-backup-${currentDateISO()}.json`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 0);
+        showToast("全キャリアデータのバックアップをダウンロードしました。");
+      }
+      function importCareerBackup(event) {
+        const input = event.currentTarget;
+        const file = input.files?.[0];
+        input.value = "";
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onerror = () => showToast("バックアップファイルを読み込めませんでした。");
+        reader.onload = () => {
+          try {
+            const parsed = JSON.parse(String(reader.result || ""));
+            const importedState = parsed?.format === "touchline-fc27-backup" ? parsed.state : parsed;
+            if (!importedState || !Array.isArray(importedState.seasons) || !importedState.seasons.length) {
+              showToast("有効なTouchline全データバックアップではありません。");
+              return;
+            }
+            const serialized = JSON.stringify(importedState);
+            if (!serialized || !window.confirm("現在のこの端末のキャリアデータを、選択したバックアップで置き換えます。続行しますか？")) return;
+            const currentData = localStorage.getItem(STORAGE_KEY) || JSON.stringify(state);
+            localStorage.setItem(`${STORAGE_KEY}-backup-import-${Date.now()}`, currentData);
+            localStorage.setItem(STORAGE_KEY, serialized);
+            closeModal();
+            location.reload();
+          } catch (error) {
+            console.error("全データバックアップを適用できませんでした。", error);
+            showToast("バックアップを適用できませんでした。ファイル形式と端末の保存容量を確認してください。");
+          }
+        };
+        reader.readAsText(file);
       }
       function initializeCloudClient() {
         const config = cloudConfig();
